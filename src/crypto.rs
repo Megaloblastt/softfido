@@ -7,6 +7,10 @@ use chrono::{DateTime, Utc};
 use cookie_factory;
 use crate::prompt;
 
+// MPC ECDSA constants.
+pub const CKM_MPCECDSA_KEY_PAIR_GEN: CK_MECHANISM_TYPE = 0x0000103F;
+pub const CKM_MPCECDSA: CK_MECHANISM_TYPE = 0x0000104F;
+
 pub struct KeyStore<'a> {
     ctx: &'a Ctx,
     session: CK_SESSION_HANDLE,
@@ -272,10 +276,10 @@ impl<'a> KeyStore<'a> {
         assert!(self.find_secret_key().unwrap().is_some());
         Ok(())
     }
-    
+
     fn create_token_counter(&self, value:u32) -> Result<(), Error> {
         self.ctx.create_object(
-            self.session, 
+            self.session,
             &vec![A(CKA_CLASS).with_ck_ulong(&CKO_DATA),
                   A(CKA_TOKEN).with_bool(&CK_TRUE),
                   A(CKA_LABEL).with_string(&TOKEN_COUNTER_LABEL.to_string()),
@@ -298,7 +302,7 @@ impl<'a> KeyStore<'a> {
             Err(err) => return Err(err),
         };
         ctx.destroy_object(s, counter)?;
-        self.create_token_counter(v+1)?; 
+        self.create_token_counter(v+1)?;
         Ok(v)
     }
 
@@ -329,7 +333,7 @@ impl<'a> KeyStore<'a> {
                                               Error> {
         let (ctx, s) = (&self.ctx, self.session);
         let (pub_key, priv_key) = ctx.generate_key_pair(
-            s, &mechanism(CKM_EC_KEY_PAIR_GEN),
+            s, &mechanism(CKM_MPCECDSA_KEY_PAIR_GEN),
             &vec![A(CKA_KEY_TYPE).with_ck_ulong(&CKK_EC),
                   A(CKA_TOKEN).with_bool(&CK_FALSE),
                   A(CKA_EC_PARAMS).with_bytes(curve_oid("secp256r1")),
@@ -360,7 +364,7 @@ impl<'a> KeyStore<'a> {
         ctx.digest_init(s, &mechanism(CKM_SHA256))?;
         with_vec(data, |data| ctx.digest(s, data))
     }
-    
+
     pub fn sign(&self, key: &[u8], data: &[u8]) -> Result<Vec<u8>, Error> {
         let (ctx, s) = (&self.ctx, self.session);
         let hash = self.sha256_hash(&data)?;
@@ -373,7 +377,7 @@ impl<'a> KeyStore<'a> {
                   A(CKA_KEY_TYPE).with_ck_ulong(&CKK_EC),
                   A(CKA_TOKEN).with_bool(&CK_FALSE),
             ])?;
-        ctx.sign_init(s, &mechanism(CKM_ECDSA), private_key)?;
+        ctx.sign_init(s, &mechanism(CKM_MPCECDSA), private_key)?;
         let signature = ctx.sign(s, &hash)?;
         Ok(der_encode_signature(&signature))
     }
@@ -408,7 +412,7 @@ impl<'a> KeyStore<'a> {
     // FIXME: use clock from token
     pub fn create_certificate(&self, wrapped_priv_key: &[u8], pub_key: &[u8],
                               issuer: &str, subject: &str,
-                              not_before: DateTime<Utc>, 
+                              not_before: DateTime<Utc>,
                               not_after: Option<DateTime<Utc>>) ->
         Result<Vec<u8>, Error> {
             let sig_algo = EcdsaWithSha256 {};
@@ -466,7 +470,7 @@ impl<'a> x509::SubjectPublicKeyInfo for EcSubjectPublicKeyInfo<'a> {
 #[cfg(test)]
 mod tests {
     use super::globals::{with_ctx, R};
-    
+
     fn with_token<T> (f: &dyn Fn (&super::KeyStore) -> R<T>) -> R<T> {
         let lib = "/usr/lib/softhsm/libsofthsm2.so";
         let home = std::env::var("HOME").unwrap();
@@ -479,7 +483,7 @@ mod tests {
             f(&token)
         })
     }
-    
+
     #[test]
     fn open_token () {
         let _ = with_token(&|_| {Ok(())});

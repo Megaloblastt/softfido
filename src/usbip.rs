@@ -6,7 +6,7 @@ pub mod bindings {
     #![allow(non_camel_case_types)]
     #![allow(non_snake_case)]
     #![allow(dead_code)]
-    
+
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
@@ -23,6 +23,31 @@ use std::cmp::min;
 use bindings::*;
 use packed_struct::prelude::*;
 
+#[repr(C, packed)]
+#[derive(Debug, Copy, Clone)]
+struct LangIdDescriptor {
+    bLength: u8,
+    bDescriptorType: u8,
+    wLANGID: u16, // one UTF-16LE language ID
+}
+
+impl LangIdDescriptor {
+    fn new(lang_id: u16) -> Self {
+        Self {
+            bLength: size_of::<Self>() as u8,
+            bDescriptorType: 0x03, // USB_DT_STRING
+            wLANGID: lang_id.to_le(),
+        }
+    }
+
+    fn write<W: Write + ?Sized>(&self, sink: &mut W) -> std::io::Result<()> {
+        let ptr = self as *const _ as *const u8;
+        let bytes = unsafe {
+            std::slice::from_raw_parts(ptr, size_of::<Self>())
+        };
+        sink.write_all(bytes)
+    }
+}
 
 type R<T> = Result<T, Box<dyn std::error::Error>>;
 
@@ -187,7 +212,7 @@ impl<'a> Device<'a> {
              end_collection(),
             ].iter().flatten().map(|&u8| u8).collect()
         };
-        
+
         Self {
             device_descriptor: usb_device_descriptor {
                 bLength: u8::try_from(size_of::<usb_device_descriptor>())
@@ -330,12 +355,8 @@ impl<'a> Device<'a> {
     }
 
     fn get_lang_descriptor(&self, sink: &mut dyn Write) -> Result<(), Error> {
-        let d = usb_string_descriptor {
-            bLength: size_of::<usb_string_descriptor>() as u8,
-            bDescriptorType: DescriptorType::String.to_primitive(),
-            wData: [LANG_ID_EN_US.to_le()],
-        };
-        write_struct(sink, &d)
+        let d = LangIdDescriptor::new(LANG_ID_EN_US);
+        d.write(sink)
     }
 
     fn get_string_descriptor(
@@ -372,7 +393,7 @@ impl<'a> Device<'a> {
             r#type, index, lang, length
         );
         use DescriptorType::*;
-        
+
         match (r#type, index, lang) {
             (Device, 0, 0) =>
                 write_struct(sink, &self.device_descriptor),
